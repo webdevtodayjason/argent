@@ -1,0 +1,618 @@
+/**
+ * Argent Always-On Loop
+ *
+ * This is the heart of Argent - a persistent agent loop that:
+ * 1. Listens for events (messages, tasks, heartbeats, webhooks)
+ * 2. Prioritizes and queues them
+ * 3. Routes to appropriate model based on complexity
+ * 4. Executes with task accountability
+ * 5. Stores results in memory
+ */
+
+import { EventEmitter } from 'events';
+
+// =============================================================================
+// Types
+// =============================================================================
+
+type Priority = 'urgent' | 'high' | 'normal' | 'low' | 'background';
+
+type EventType =
+  | 'message'      // Incoming message from channel
+  | 'task'         // Task needs processing
+  | 'heartbeat'    // Periodic check-in
+  | 'calendar'     // Calendar event trigger
+  | 'webhook'      // External webhook
+  | 'schedule';    // Cron job trigger
+
+interface AgentEvent {
+  id: string;
+  type: EventType;
+  priority: Priority;
+  payload: unknown;
+  createdAt: number;
+  source?: {
+    channel?: string;
+    sessionKey?: string;
+    userId?: string;
+  };
+}
+
+type AgentState =
+  | 'idle'           // Waiting for events
+  | 'processing'     // Working on an event
+  | 'waiting_tool'   // Tool call in progress
+  | 'responding'     // Sending response
+  | 'cooldown';      // Rate limit / backoff
+
+interface LoopConfig {
+  heartbeatInterval: number;  // ms
+  maxConcurrent: number;      // parallel events (usually 1)
+  idleTimeout: number;        // ms before background tasks
+  cooldownMs: number;         // ms between events
+}
+
+// =============================================================================
+// Event Queue
+// =============================================================================
+
+class PriorityEventQueue {
+  private queues: Map<Priority, AgentEvent[]> = new Map([
+    ['urgent', []],
+    ['high', []],
+    ['normal', []],
+    ['low', []],
+    ['background', []],
+  ]);
+
+  private priorityOrder: Priority[] = ['urgent', 'high', 'normal', 'low', 'background'];
+
+  push(event: AgentEvent): void {
+    const queue = this.queues.get(event.priority);
+    if (queue) {
+      queue.push(event);
+    }
+  }
+
+  pop(): AgentEvent | undefined {
+    for (const priority of this.priorityOrder) {
+      const queue = this.queues.get(priority);
+      if (queue && queue.length > 0) {
+        return queue.shift();
+      }
+    }
+    return undefined;
+  }
+
+  peek(): AgentEvent | undefined {
+    for (const priority of this.priorityOrder) {
+      const queue = this.queues.get(priority);
+      if (queue && queue.length > 0) {
+        return queue[0];
+      }
+    }
+    return undefined;
+  }
+
+  isEmpty(): boolean {
+    return this.priorityOrder.every(p => {
+      const queue = this.queues.get(p);
+      return !queue || queue.length === 0;
+    });
+  }
+
+  size(): number {
+    return this.priorityOrder.reduce((sum, p) => {
+      const queue = this.queues.get(p);
+      return sum + (queue?.length ?? 0);
+    }, 0);
+  }
+
+  // Get counts by priority for monitoring
+  stats(): Record<Priority, number> {
+    const result: Record<Priority, number> = {} as Record<Priority, number>;
+    for (const priority of this.priorityOrder) {
+      result[priority] = this.queues.get(priority)?.length ?? 0;
+    }
+    return result;
+  }
+}
+
+// =============================================================================
+// State Machine
+// =============================================================================
+
+class AgentStateMachine extends EventEmitter {
+  private _state: AgentState = 'idle';
+  private _lastTransition: number = Date.now();
+
+  get state(): AgentState {
+    return this._state;
+  }
+
+  transition(newState: AgentState): void {
+    const oldState = this._state;
+    this._state = newState;
+    this._lastTransition = Date.now();
+    this.emit('transition', { from: oldState, to: newState });
+  }
+
+  canProcess(): boolean {
+    return this._state === 'idle';
+  }
+
+  timeSinceLastTransition(): number {
+    return Date.now() - this._lastTransition;
+  }
+}
+
+// =============================================================================
+// Model Router
+// =============================================================================
+
+type ModelTier = 'local' | 'fast' | 'balanced' | 'powerful';
+
+interface ComplexityFactors {
+  tokenEstimate: number;
+  toolsRequired: string[];
+  memoryLookupsNeeded: boolean;
+  conversationDepth: number;
+  timeSensitive: boolean;
+  creativityRequired: boolean;
+}
+
+function scoreComplexity(factors: ComplexityFactors): number {
+  let score = 0;
+
+  // Token count (0-0.3)
+  if (factors.tokenEstimate < 500) score += 0.05;
+  else if (factors.tokenEstimate < 2000) score += 0.15;
+  else if (factors.tokenEstimate < 5000) score += 0.25;
+  else score += 0.3;
+
+  // Tool complexity (0-0.3)
+  const complexTools = ['browser', 'code_execute', 'image_generate', 'web_search'];
+  const simpleTools = ['weather', 'time', 'calc', 'tasks_list'];
+
+  if (factors.toolsRequired.some(t => complexTools.includes(t))) {
+    score += 0.25;
+  } else if (factors.toolsRequired.length > 2) {
+    score += 0.15;
+  } else if (factors.toolsRequired.some(t => simpleTools.includes(t))) {
+    score += 0.05;
+  }
+
+  // Memory needs (0-0.15)
+  if (factors.memoryLookupsNeeded) score += 0.15;
+
+  // Conversation depth (0-0.15)
+  score += Math.min(factors.conversationDepth * 0.03, 0.15);
+
+  // Creativity (0-0.1)
+  if (factors.creativityRequired) score += 0.1;
+
+  return Math.min(score, 1.0);
+}
+
+function selectModelTier(score: number): ModelTier {
+  if (score < 0.3) return 'local';
+  if (score < 0.5) return 'fast';
+  if (score < 0.8) return 'balanced';
+  return 'powerful';
+}
+
+// Analyze event to estimate complexity
+function analyzeEvent(event: AgentEvent): ComplexityFactors {
+  // This would be more sophisticated in practice
+  const payload = event.payload as { text?: string; tools?: string[] };
+  const text = payload.text ?? '';
+
+  return {
+    tokenEstimate: Math.ceil(text.length / 4) + 500, // rough estimate
+    toolsRequired: payload.tools ?? [],
+    memoryLookupsNeeded: text.toLowerCase().includes('remember') ||
+                          text.toLowerCase().includes('last time') ||
+                          text.toLowerCase().includes('before'),
+    conversationDepth: 1, // would come from session context
+    timeSensitive: event.priority === 'urgent' || event.priority === 'high',
+    creativityRequired: text.toLowerCase().includes('write') ||
+                        text.toLowerCase().includes('create') ||
+                        text.toLowerCase().includes('design'),
+  };
+}
+
+// =============================================================================
+// Always-On Loop
+// =============================================================================
+
+interface LoopDeps {
+  tasks: TaskStore;
+  memory: MemoryStore;
+  models: ModelProvider;
+  channels: ChannelRouter;
+  dashboard: DashboardBroadcaster;
+}
+
+// Placeholder interfaces (would be imported from actual modules)
+interface TaskStore {
+  list(filter?: { status?: string }): Promise<Task[]>;
+  get(id: string): Promise<Task | null>;
+  create(task: Partial<Task>): Promise<Task>;
+  update(id: string, updates: Partial<Task>): Promise<Task>;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  status: string;
+  priority: Priority;
+}
+
+interface MemoryStore {
+  search(query: string): Promise<unknown[]>;
+  store(observation: unknown): Promise<void>;
+  getContext(options: { maxTokens: number }): Promise<string>;
+}
+
+interface ModelProvider {
+  run(tier: ModelTier, prompt: string, options: unknown): Promise<AgentResponse>;
+}
+
+interface AgentResponse {
+  text: string;
+  toolCalls: unknown[];
+  taskActionsUsed: boolean;
+}
+
+interface ChannelRouter {
+  send(channel: string, message: string): Promise<void>;
+}
+
+interface DashboardBroadcaster {
+  broadcast(event: unknown): void;
+}
+
+export class AlwaysOnLoop extends EventEmitter {
+  private queue: PriorityEventQueue;
+  private state: AgentStateMachine;
+  private config: LoopConfig;
+  private deps: LoopDeps;
+  private running: boolean = false;
+  private heartbeatTimer?: NodeJS.Timeout;
+
+  constructor(config: LoopConfig, deps: LoopDeps) {
+    super();
+    this.queue = new PriorityEventQueue();
+    this.state = new AgentStateMachine();
+    this.config = config;
+    this.deps = deps;
+
+    // Forward state transitions
+    this.state.on('transition', (data) => {
+      this.emit('state', data);
+      this.deps.dashboard.broadcast({ type: 'agent_state', ...data });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  async start(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+
+    console.log('[Argent] Starting always-on loop...');
+
+    // Start heartbeat timer
+    this.heartbeatTimer = setInterval(() => {
+      this.enqueue({
+        id: `heartbeat-${Date.now()}`,
+        type: 'heartbeat',
+        priority: 'low',
+        payload: {},
+        createdAt: Date.now(),
+      });
+    }, this.config.heartbeatInterval);
+
+    // Start processing loop
+    this.processLoop();
+
+    this.emit('started');
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+
+    console.log('[Argent] Stopped always-on loop');
+    this.emit('stopped');
+  }
+
+  enqueue(event: AgentEvent): void {
+    this.queue.push(event);
+    this.emit('enqueue', event);
+
+    // Wake up if idle
+    if (this.state.canProcess()) {
+      setImmediate(() => this.processNext());
+    }
+  }
+
+  getStatus(): {
+    state: AgentState;
+    queueSize: number;
+    queueStats: Record<Priority, number>;
+  } {
+    return {
+      state: this.state.state,
+      queueSize: this.queue.size(),
+      queueStats: this.queue.stats(),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Processing Loop
+  // ---------------------------------------------------------------------------
+
+  private async processLoop(): Promise<void> {
+    while (this.running) {
+      if (this.state.canProcess() && !this.queue.isEmpty()) {
+        await this.processNext();
+      }
+
+      // Small delay to prevent busy-waiting
+      await this.sleep(50);
+    }
+  }
+
+  private async processNext(): Promise<void> {
+    const event = this.queue.pop();
+    if (!event) return;
+
+    try {
+      this.state.transition('processing');
+      this.emit('processing', event);
+
+      // Route based on event type
+      switch (event.type) {
+        case 'message':
+          await this.handleMessage(event);
+          break;
+        case 'task':
+          await this.handleTask(event);
+          break;
+        case 'heartbeat':
+          await this.handleHeartbeat(event);
+          break;
+        case 'calendar':
+          await this.handleCalendar(event);
+          break;
+        case 'webhook':
+          await this.handleWebhook(event);
+          break;
+        case 'schedule':
+          await this.handleSchedule(event);
+          break;
+      }
+
+      this.emit('completed', event);
+    } catch (error) {
+      this.emit('error', { event, error });
+      console.error('[Argent] Error processing event:', error);
+    } finally {
+      // Cooldown before next event
+      this.state.transition('cooldown');
+      await this.sleep(this.config.cooldownMs);
+      this.state.transition('idle');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Event Handlers
+  // ---------------------------------------------------------------------------
+
+  private async handleMessage(event: AgentEvent): Promise<void> {
+    const payload = event.payload as {
+      text: string;
+      channel: string;
+      sessionKey: string;
+    };
+
+    // 1. Analyze complexity and select model
+    const factors = analyzeEvent(event);
+    const score = scoreComplexity(factors);
+    const tier = selectModelTier(score);
+
+    console.log(`[Argent] Message complexity: ${score.toFixed(2)} → ${tier}`);
+
+    // 2. Get memory context
+    const memoryContext = await this.deps.memory.getContext({ maxTokens: 2000 });
+
+    // 3. Get pending tasks
+    const pendingTasks = await this.deps.tasks.list({ status: 'pending' });
+    const taskContext = pendingTasks.length > 0
+      ? `\n\n## Pending Tasks\n${pendingTasks.map(t => `- [${t.id}] ${t.title}`).join('\n')}`
+      : '';
+
+    // 4. Build prompt
+    const prompt = `${memoryContext}${taskContext}\n\nUser: ${payload.text}`;
+
+    // 5. Run model
+    this.state.transition('waiting_tool');
+    const response = await this.deps.models.run(tier, prompt, {
+      sessionKey: payload.sessionKey,
+      streaming: true,
+    });
+
+    // 6. Send response
+    this.state.transition('responding');
+    await this.deps.channels.send(payload.channel, response.text);
+
+    // 7. Store in memory
+    await this.deps.memory.store({
+      type: 'message',
+      input: payload.text,
+      output: response.text,
+      model: tier,
+      complexity: score,
+    });
+  }
+
+  private async handleTask(event: AgentEvent): Promise<void> {
+    const payload = event.payload as { taskId: string };
+    const task = await this.deps.tasks.get(payload.taskId);
+
+    if (!task) {
+      console.warn(`[Argent] Task not found: ${payload.taskId}`);
+      return;
+    }
+
+    // Mark in progress
+    await this.deps.tasks.update(task.id, { status: 'in_progress' });
+    this.deps.dashboard.broadcast({ type: 'task_update', task });
+
+    // Process task (would involve running agent with task context)
+    const factors = analyzeEvent(event);
+    const score = scoreComplexity(factors);
+    const tier = selectModelTier(score);
+
+    const prompt = `Execute this task: ${task.title}\n\nYou MUST call tasks_complete or tasks_block when done.`;
+
+    const response = await this.deps.models.run(tier, prompt, {
+      requireTaskAction: true,
+    });
+
+    // If agent didn't use task tools, flag it
+    if (!response.taskActionsUsed) {
+      console.warn(`[Argent] Task ${task.id} not properly addressed`);
+      await this.deps.tasks.update(task.id, {
+        status: 'pending',
+        // attempts: task.attempts + 1
+      });
+    }
+  }
+
+  private async handleHeartbeat(event: AgentEvent): Promise<void> {
+    // 1. Check pending tasks
+    const pendingTasks = await this.deps.tasks.list({ status: 'pending' });
+
+    if (pendingTasks.length === 0) {
+      // Nothing to do
+      this.deps.dashboard.broadcast({ type: 'heartbeat', status: 'ok' });
+      return;
+    }
+
+    // 2. Build heartbeat prompt with tasks
+    const taskList = pendingTasks
+      .slice(0, 5) // Limit to top 5
+      .map(t => `- [${t.id}] ${t.title} (${t.priority})`)
+      .join('\n');
+
+    const prompt = `## Heartbeat Check
+
+You have ${pendingTasks.length} pending tasks:
+
+${taskList}
+
+For each task, either:
+1. Call tasks_start and work on it
+2. Call tasks_block with a reason
+3. Call tasks_defer if it should wait
+
+Do NOT reply HEARTBEAT_OK until you've addressed each task.`;
+
+    // 3. Run with local model (heartbeat is background work)
+    const response = await this.deps.models.run('local', prompt, {
+      requireTaskAction: true,
+    });
+
+    // 4. Validate task actions were taken
+    if (!response.taskActionsUsed && pendingTasks.length > 0) {
+      console.warn('[Argent] Heartbeat did not address pending tasks');
+      // Could escalate to higher-tier model or alert user
+    }
+
+    this.deps.dashboard.broadcast({
+      type: 'heartbeat',
+      status: 'processed',
+      tasksAddressed: response.taskActionsUsed,
+    });
+  }
+
+  private async handleCalendar(event: AgentEvent): Promise<void> {
+    const payload = event.payload as {
+      eventTitle: string;
+      eventTime: string;
+      minutesBefore: number;
+    };
+
+    // Create urgent notification
+    const prompt = `CALENDAR ALERT: "${payload.eventTitle}" starts in ${payload.minutesBefore} minutes at ${payload.eventTime}.
+
+Notify the user through their active channel.`;
+
+    const response = await this.deps.models.run('fast', prompt, {});
+
+    // Would route to active channel or dashboard
+    this.deps.dashboard.broadcast({
+      type: 'calendar_alert',
+      event: payload,
+      message: response.text,
+    });
+  }
+
+  private async handleWebhook(event: AgentEvent): Promise<void> {
+    // Generic webhook handler
+    const payload = event.payload as { source: string; data: unknown };
+
+    console.log(`[Argent] Webhook from ${payload.source}:`, payload.data);
+
+    // Would process based on webhook source
+  }
+
+  private async handleSchedule(event: AgentEvent): Promise<void> {
+    // Cron job trigger
+    const payload = event.payload as { cronId: string; command: string };
+
+    console.log(`[Argent] Schedule triggered: ${payload.cronId}`);
+
+    // Execute the scheduled command
+    const response = await this.deps.models.run('balanced', payload.command, {});
+
+    // Store result
+    await this.deps.memory.store({
+      type: 'schedule',
+      cronId: payload.cronId,
+      command: payload.command,
+      result: response.text,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------------
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+// =============================================================================
+// Factory
+// =============================================================================
+
+export function createAlwaysOnLoop(deps: LoopDeps): AlwaysOnLoop {
+  const config: LoopConfig = {
+    heartbeatInterval: 30_000,  // 30 seconds
+    maxConcurrent: 1,
+    idleTimeout: 60_000,       // 1 minute
+    cooldownMs: 100,
+  };
+
+  return new AlwaysOnLoop(config, deps);
+}

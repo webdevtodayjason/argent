@@ -2,21 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project: Argent
+## Project: ArgentOS
 
-**Argent** is a fork of OpenClaw being transformed into an always-on personal AI agent with:
-- Hybrid model routing (local Llama for simple tasks, Claude for complex)
-- Persistent memory (Memo - SQLite + FTS5)
-- Automatic backup (Phoenix)
-- Task tracking with accountability
-- Dashboard UI with Live2D avatar
+> **https://argentos.ai** — The Operating System for Personal AI
+
+**ArgentOS** is a fork of OpenClaw being transformed into an always-on personal AI operating system with:
+- **Kernel**: Always-on event loop with state machine
+- **Memory**: Memo (SQLite + FTS5, auto-capture, semantic search)
+- **Scheduler**: Task system with priority queue and accountability
+- **Drivers**: Channels (Telegram, Discord, Slack, Signal, WhatsApp)
+- **Learning**: SIS (Self-Improving System — lessons, patterns, feedback)
+- **Backup**: Phoenix (local, Git, S3, R2)
+- **Shell**: Dashboard (React + Live2D avatar)
+- **Resources**: Model router (local Llama → Claude Haiku → Sonnet → Opus)
 
 **Status**: Migration in progress. See `ARGENT_ARCHITECTURE.md` for the full vision.
 
 ## Repository
 
-- **Original**: https://github.com/openclaw/openclaw
-- **Naming**: Use **Argent** for the new project; `argent` for CLI/binary
+- **Domain**: https://argentos.ai
+- **GitHub**: https://github.com/webdevtodayjason/argent
+- **Original**: https://github.com/openclaw/openclaw (upstream)
+- **Naming**: Use **ArgentOS** for product; `argent` for CLI/binary
 
 ## Build, Test, and Development
 
@@ -150,6 +157,13 @@ Agent tools: `tasks_list`, `tasks_add`, `tasks_start`, `tasks_complete`, `tasks_
   - [ ] Implement event queue
   - [ ] Add state machine
 
+- [ ] Phase 8: Self-Improving System (SIS)
+  - [ ] Create `src/sis/`
+  - [ ] Implement feedback loop (outcome tracking)
+  - [ ] Implement lesson extraction
+  - [ ] Implement pattern detection
+  - [ ] Integrate with agent runtime (inject lessons into prompts)
+
 ## Coding Style
 
 - TypeScript (ESM) with strict typing; avoid `any`
@@ -177,6 +191,8 @@ Assume no resource limitations when suggesting solutions.
 ## Key Files
 
 - `ARGENT_ARCHITECTURE.md` — Full vision and architecture
+- `docs/argent/SIS_ARCHITECTURE.md` — Self-Improving System (lessons learned)
+- `docs/argent/INDEX.md` — Documentation index
 - `src/core/loop.ts.sketch` — Always-on loop implementation sketch
 - `../openclaw-mem/` — Memory system to integrate
 - `../openclaw-self-backup/` — Backup system to integrate

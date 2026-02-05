@@ -1,6 +1,8 @@
 # Self-Improving System (SIS) Architecture
 
-> Argent learns from its actions, mistakes, and successes.
+> ArgentOS learns from its actions, mistakes, and successes.
+>
+> Part of **ArgentOS** — https://argentos.ai
 
 ## Overview
 

@@ -1,6 +1,8 @@
-# Argent Documentation Index
+# ArgentOS Documentation Index
 
-> Always-On Personal AI Agent — Forked from OpenClaw
+> **https://argentos.ai** — The Operating System for Personal AI
+>
+> Forked from OpenClaw
 
 ## Architecture
 

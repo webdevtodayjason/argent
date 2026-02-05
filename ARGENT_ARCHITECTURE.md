@@ -1,16 +1,31 @@
-# Argent - Always-On Personal AI Agent
+# ArgentOS - The Operating System for Personal AI
 
+> **https://argentos.ai**
+>
 > Forked from OpenClaw with integrated memory (Memo), backup (Phoenix), dashboard, and self-improving capabilities (SIS).
 
 ## Vision
 
-Argent is a **proactive personal AI agent** that:
-- Runs always-on, not just when you message it
-- Uses hybrid model routing (local for simple, frontier for complex)
-- Tracks tasks with accountability (not just hope)
-- Maintains persistent memory across sessions
-- **Learns from experience** (Self-Improving System)
-- Backs up its own state automatically
+ArgentOS is **the operating system for your personal AI** — a runtime that manages:
+
+| OS Concept | ArgentOS Equivalent |
+|------------|---------------------|
+| Kernel | Always-On Loop (event queue, state machine) |
+| Memory Management | Memo (SQLite + FTS5, context injection) |
+| Process Scheduler | Task System (priority queue, accountability) |
+| Device Drivers | Channels (Telegram, Discord, Slack, Signal, WhatsApp) |
+| System Calls | Tool Framework (web, browser, calendar, etc.) |
+| Learning Subsystem | SIS (lessons, patterns, feedback loops) |
+| Backup/Restore | Phoenix (local, Git, S3, R2) |
+| GUI Shell | Dashboard (React + Live2D avatar) |
+| Resource Manager | Model Router (local → Haiku → Sonnet → Opus) |
+
+**Core principles:**
+- **Always-on** — Runs continuously, not just request/response
+- **Proactive** — Initiates actions, doesn't just react
+- **Self-improving** — Learns from mistakes and successes
+- **Cost-aware** — Routes to cheapest capable model
+- **Self-maintaining** — Backs up its own state
 
 ## Project Structure
 

@@ -1,6 +1,6 @@
 # Argent - Always-On Personal AI Agent
 
-> Forked from OpenClaw with integrated memory (Memo), backup (Phoenix), and dashboard.
+> Forked from OpenClaw with integrated memory (Memo), backup (Phoenix), dashboard, and self-improving capabilities (SIS).
 
 ## Vision
 
@@ -9,6 +9,7 @@ Argent is a **proactive personal AI agent** that:
 - Uses hybrid model routing (local for simple, frontier for complex)
 - Tracks tasks with accountability (not just hope)
 - Maintains persistent memory across sessions
+- **Learns from experience** (Self-Improving System)
 - Backs up its own state automatically
 
 ## Project Structure
@@ -33,6 +34,13 @@ argent/
 │   │   ├── tracker.ts           # Completion tracking
 │   │   ├── tools.ts             # tasks_* tools for agent
 │   │   └── types.ts             # Task schema
+│   │
+│   ├── sis/                     # NEW: Self-Improving System
+│   │   ├── feedback.ts          # Feedback loop and outcome tracking
+│   │   ├── lessons.ts           # Lesson extraction and storage
+│   │   ├── patterns.ts          # Pattern detection
+│   │   ├── retrieval.ts         # Lesson retrieval for prompts
+│   │   └── maintenance.ts       # Consolidation or decay
 │   │
 │   ├── backup/                  # From openclaw-self-backup (Phoenix)
 │   │   ├── backup.ts            # Backup orchestration

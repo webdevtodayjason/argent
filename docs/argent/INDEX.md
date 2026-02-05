@@ -7,6 +7,7 @@
 | Document | Description |
 |----------|-------------|
 | [ARGENT_ARCHITECTURE.md](../../ARGENT_ARCHITECTURE.md) | Full vision, project structure, always-on loop, task system, model router |
+| [SIS_ARCHITECTURE.md](./SIS_ARCHITECTURE.md) | Self-Improving System — lessons learned, pattern detection, feedback loops |
 | [loop.ts.sketch](../../src/core/loop.ts.sketch) | Always-on loop implementation sketch |
 
 ## Integrated Systems
